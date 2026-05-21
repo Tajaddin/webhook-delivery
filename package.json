@@ -1,0 +1,31 @@
+{
+  "name": "webhook-delivery",
+  "version": "0.1.0",
+  "private": true,
+  "description": "At-least-once webhook delivery with exponential backoff, dead-letter queue, HMAC signing, and idempotency. Hero: 100% eventual delivery under 30% transient-failure injection.",
+  "license": "MIT",
+  "author": "Tajaddin Gafarov <gafarovtajaddin@gmail.com>",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "tsx benchmarks/fault_injection.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

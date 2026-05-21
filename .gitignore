@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.local
+.vitest-cache/
+benchmarks/results/*.tmp.json
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
