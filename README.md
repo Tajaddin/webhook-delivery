@@ -46,11 +46,15 @@ Role categories unlocked: **Backend (Node/TypeScript)**, Platform Engineering, i
 
 "At-least-once delivery with retries and a DLQ" is a staple platform-engineering interview topic. This repo backs it with a real state machine, HMAC auth, idempotency, and a fault-injection benchmark that proves the guarantee instead of asserting it.
 
-## Run it
+## How to run
+
+Prerequisites: Node 20+.
 
 ```bash
 npm install
+npm test                  # 21 vitest cases
 npm run dev               # API on :8080, background worker draining every 200ms
+npm run bench             # fault-injection benchmark (99.92% eventual delivery hero)
 ```
 
 ```bash
