@@ -10,7 +10,20 @@ import { HttpTransport } from "./transport.js";
 import type { EnqueueRequest } from "./types.js";
 import { DeliveryWorker } from "./worker.js";
 
-const secret = process.env["WEBHOOK_SECRET"] ?? "dev-secret-change-me";
+const DEV_SECRET = "dev-secret-change-me";
+const secret = process.env["WEBHOOK_SECRET"] ?? DEV_SECRET;
+
+// Fail-fast in production: refuse to boot if the HMAC signing secret is
+// missing or still the dev default. Receivers verify signatures with this
+// secret; a known default trivially defeats the whole signing scheme.
+if (process.env["NODE_ENV"] === "production" && secret === DEV_SECRET) {
+  console.error(
+    "FATAL: WEBHOOK_SECRET must be set to a real value in production. " +
+    "The dev default 'dev-secret-change-me' is not allowed.",
+  );
+  process.exit(1);
+}
+
 const queue = new DeliveryQueue();
 const worker = new DeliveryWorker(queue, new HttpTransport(), { secret, clock: new SystemClock() });
 
