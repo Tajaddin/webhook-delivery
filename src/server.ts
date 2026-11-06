@@ -6,6 +6,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { SystemClock } from "./clock.js";
 import { DeliveryQueue } from "./queue.js";
+import { checkUrl } from "./ssrf.js";
 import { HttpTransport } from "./transport.js";
 import type { EnqueueRequest } from "./types.js";
 import { DeliveryWorker } from "./worker.js";
@@ -39,9 +40,11 @@ app.get("/healthz", (c) => c.json({ status: "ok" }));
 
 app.post("/webhooks", async (c) => {
   const body = await c.req.json<EnqueueRequest>().catch(() => null);
-  if (!body || typeof body.url !== "string" || !/^https?:\/\//.test(body.url)) {
+  if (!body || typeof body.url !== "string") {
     return c.json({ error: "url (http/https) and payload are required" }, 400);
   }
+  const refused = checkUrl(body.url);
+  if (refused) return c.json({ error: refused }, 400);
   const delivery = queue.enqueue(body);
   return c.json({ id: delivery.id, status: delivery.status, idempotencyKey: delivery.idempotencyKey }, 202);
 });

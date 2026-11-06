@@ -38,6 +38,7 @@ A webhook dispatcher with the guarantees production systems actually need:
 | **Dead-letter queue** | Exhausted deliveries move to `dead` and are inspectable at `/dlq`. |
 | **HMAC signing** | `signing.ts` signs `${timestamp}.${body}` with HMAC-SHA256 (Stripe-style `t=,v1=` header), verified in constant time with replay-window enforcement. |
 | **Idempotency** | Re-enqueuing the same idempotency key returns the existing delivery; no duplicate sends. |
+| **SSRF guard** | `ssrf.ts` resolves each receiver hostname inside the socket's own lookup, refuses private, loopback, link-local, ULA and cloud-metadata addresses (IPv4 and IPv6, including IPv4-mapped), connects only to the addresses it checked (no DNS rebinding), allows ports 80 and 443 only, and never follows redirects. |
 | **Deterministic testing** | The clock and RNG are injectable; a `VirtualClock` makes backoff waits instant, so the full retry/DLQ behavior is tested with no real time and no network. |
 
 ## Why this matters for hiring
@@ -101,7 +102,8 @@ src/
   backoff.ts     # exponential backoff + full jitter + exhaustion
   clock.ts       # SystemClock + VirtualClock (deterministic tests/bench)
   queue.ts       # in-memory delivery queue + idempotency + DLQ
-  transport.ts   # HttpTransport (fetch) + FakeTransport (programmable failures)
+  ssrf.ts        # outbound address/port policy + guarded DNS lookup
+  transport.ts   # HttpTransport (node:http, SSRF-guarded) + FakeTransport (programmable failures)
   worker.ts      # the at-least-once state machine
   server.ts      # Hono API + background drain loop
 benchmarks/fault_injection.ts   # eventual-delivery + throughput hero
