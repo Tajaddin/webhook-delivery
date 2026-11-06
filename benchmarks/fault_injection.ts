@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < args.count; i++) {
     const url = `https://hooks.example.com/e/${i}`;
     if (rand() < args.deadFraction) deadUrls.add(url);
-    queue.enqueue({ url, payload: { i }, idempotencyKey: `k-${i}` }, clock.nowMs());
+    queue.enqueue({ endpointId: `e-${i}`, url, payload: { i }, idempotencyKey: `k-${i}` }, clock.nowMs());
   }
 
   const transport = new FakeTransport({
@@ -58,7 +58,6 @@ async function main(): Promise<void> {
     rand: mulberry32(99),
   });
   const worker = new DeliveryWorker(queue, transport, {
-    secret: "bench",
     policy: DEFAULT_BACKOFF,
     clock,
     rand,

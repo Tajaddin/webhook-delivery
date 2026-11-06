@@ -14,7 +14,6 @@ import type { Transport } from "./transport.js";
 import type { Delivery } from "./types.js";
 
 export interface WorkerOptions {
-  secret: string;
   policy?: BackoffPolicy;
   clock?: Clock;
   rand?: () => number;
@@ -28,7 +27,7 @@ export class DeliveryWorker {
   constructor(
     private readonly queue: DeliveryQueue,
     private readonly transport: Transport,
-    private readonly opts: WorkerOptions,
+    opts: WorkerOptions = {},
   ) {
     this.policy = opts.policy ?? DEFAULT_BACKOFF;
     this.clock = opts.clock ?? new SystemClock();
@@ -37,7 +36,7 @@ export class DeliveryWorker {
 
   /** Attempt one delivery, advancing its state. Returns the new status. */
   async attempt(delivery: Delivery): Promise<Delivery["status"]> {
-    const result = await this.transport.send(delivery.url, delivery.body, this.opts.secret);
+    const result = await this.transport.send(delivery);
     delivery.attempts += 1;
     delivery.updatedAt = this.clock.nowMs();
 

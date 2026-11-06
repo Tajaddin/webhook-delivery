@@ -8,6 +8,7 @@ import { request as httpsRequest } from "node:https";
 import type { LookupFunction } from "node:net";
 import { sign, signatureHeader } from "./signing.js";
 import { checkUrl, guardedLookup, PUBLIC_WEB, type DestinationPolicy } from "./ssrf.js";
+import type { Delivery } from "./types.js";
 
 export interface DeliveryResult {
   ok: boolean;
@@ -15,21 +16,29 @@ export interface DeliveryResult {
   error?: string;
 }
 
+/** The parts of a delivery an attempt needs. */
+export type OutboundWebhook = Pick<Delivery, "id" | "endpointId" | "url" | "body">;
+
 export interface Transport {
-  send(url: string, body: string, secret: string): Promise<DeliveryResult>;
+  send(webhook: OutboundWebhook): Promise<DeliveryResult>;
 }
 
 export class HttpTransport implements Transport {
   private readonly lookup: LookupFunction;
 
   constructor(
+    /** The signing secret of an endpoint; undefined if it is not registered. */
+    private readonly secretFor: (endpointId: string) => string | undefined,
     private readonly timeoutMs = 5000,
     private readonly policy: DestinationPolicy = PUBLIC_WEB,
   ) {
     this.lookup = guardedLookup(policy);
   }
 
-  async send(url: string, body: string, secret: string): Promise<DeliveryResult> {
+  async send(webhook: OutboundWebhook): Promise<DeliveryResult> {
+    const { id, endpointId, url, body } = webhook;
+    const secret = this.secretFor(endpointId);
+    if (secret === undefined) return { ok: false, status: 0, error: "unknown endpoint" };
     const refused = checkUrl(url, this.policy);
     if (refused) return { ok: false, status: 0, error: refused };
 
@@ -43,7 +52,9 @@ export class HttpTransport implements Transport {
           headers: {
             "content-type": "application/json",
             "content-length": Buffer.byteLength(body),
-            "webhook-signature": signatureHeader(sign(body, secret)),
+            "webhook-id": id,
+            "webhook-endpoint-id": endpointId,
+            "webhook-signature": signatureHeader(sign({ webhookId: id, endpointId, body }, secret)),
           },
           lookup: this.lookup,
           signal: AbortSignal.timeout(this.timeoutMs),
@@ -86,7 +97,7 @@ export class FakeTransport implements Transport {
     }
   }
 
-  async send(url: string, _body: string, _secret: string): Promise<DeliveryResult> {
+  async send({ url }: OutboundWebhook): Promise<DeliveryResult> {
     this.calls++;
     if (this.opts.alwaysFail?.has(url)) {
       return { ok: false, status: 500, error: "permanent failure" };

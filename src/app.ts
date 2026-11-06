@@ -1,15 +1,15 @@
-// HTTP API for the webhook delivery service. Enqueue deliveries, inspect
-// status, and view the dead-letter queue. Every route except /healthz requires
-// `Authorization: Bearer <apiToken>`.
+// HTTP API for the webhook delivery service. Register endpoints, enqueue
+// deliveries, inspect status, and view the dead-letter queue. Every route
+// except /healthz requires `Authorization: Bearer <apiToken>`.
 
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
+import type { EndpointRegistry } from "./endpoints.js";
 import type { DeliveryQueue } from "./queue.js";
 import { checkUrl } from "./ssrf.js";
-import type { EnqueueRequest } from "./types.js";
 
-export function createApp(opts: { queue: DeliveryQueue; apiToken: string }): Hono {
-  const { queue } = opts;
+export function createApp(opts: { queue: DeliveryQueue; endpoints: EndpointRegistry; apiToken: string }): Hono {
+  const { queue, endpoints } = opts;
   const app = new Hono();
 
   // Registered before the auth middleware, so health checks need no token.
@@ -17,14 +17,29 @@ export function createApp(opts: { queue: DeliveryQueue; apiToken: string }): Hon
 
   app.use("*", bearerAuth({ token: opts.apiToken }));
 
-  app.post("/webhooks", async (c) => {
-    const body = await c.req.json<EnqueueRequest>().catch(() => null);
-    if (!body || typeof body.url !== "string") {
-      return c.json({ error: "url (http/https) and payload are required" }, 400);
-    }
+  // The response is the only time the endpoint's signing secret is shown.
+  app.post("/endpoints", async (c) => {
+    const body = await c.req.json<{ url?: unknown }>().catch(() => null);
+    if (!body || typeof body.url !== "string") return c.json({ error: "url is required" }, 400);
     const refused = checkUrl(body.url);
     if (refused) return c.json({ error: refused }, 400);
-    const delivery = queue.enqueue(body);
+    return c.json(endpoints.register(body.url), 201);
+  });
+
+  app.post("/webhooks", async (c) => {
+    const body = await c.req
+      .json<{ endpointId?: unknown; payload?: unknown; idempotencyKey?: unknown }>()
+      .catch(() => null);
+    if (!body || typeof body.endpointId !== "string" || body.payload === undefined) {
+      return c.json({ error: "endpointId and payload are required" }, 400);
+    }
+    const { endpointId, payload, idempotencyKey } = body;
+    if (idempotencyKey !== undefined && typeof idempotencyKey !== "string") {
+      return c.json({ error: "idempotencyKey must be a string" }, 400);
+    }
+    const endpoint = endpoints.get(endpointId);
+    if (!endpoint) return c.json({ error: "unknown endpoint" }, 404);
+    const delivery = queue.enqueue({ endpointId, url: endpoint.url, payload, idempotencyKey });
     return c.json({ id: delivery.id, status: delivery.status, idempotencyKey: delivery.idempotencyKey }, 202);
   });
 

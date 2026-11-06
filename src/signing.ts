@@ -1,19 +1,38 @@
 // HMAC-SHA256 payload signing, the standard webhook authenticity mechanism
 // (Stripe/GitHub style). The receiver recomputes the signature over the raw
-// body with the shared secret and compares in constant time.
+// body with its endpoint secret and compares in constant time.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+
+/**
+ * What a signature covers. Binding the delivery id and the receiving
+ * endpoint's id means a signed request cannot be replayed as a different
+ * delivery or to a different endpoint.
+ */
+export interface SignedMessage {
+  /** The `webhook-id` header: the delivery id, stable across retries. */
+  webhookId: string;
+  /** The receiving endpoint's id. Receivers pass their own, not a header value. */
+  endpointId: string;
+  /** The raw request body. */
+  body: string;
+}
 
 export interface SignatureParts {
   /** Unix seconds at signing time, included to bound replay windows. */
   timestamp: number;
-  /** Hex-encoded HMAC-SHA256 over `${timestamp}.${body}`. */
+  /** Hex-encoded HMAC-SHA256 over `${timestamp}.${webhookId}.${endpointId}.${body}`. */
   signature: string;
 }
 
-export function sign(body: string, secret: string, timestamp = Math.floor(Date.now() / 1000)): SignatureParts {
-  const mac = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
-  return { timestamp, signature: mac };
+function mac(msg: SignedMessage, secret: string, timestamp: number): Buffer {
+  return createHmac("sha256", secret)
+    .update(`${timestamp}.${msg.webhookId}.${msg.endpointId}.${msg.body}`)
+    .digest();
+}
+
+export function sign(msg: SignedMessage, secret: string, timestamp = Math.floor(Date.now() / 1000)): SignatureParts {
+  return { timestamp, signature: mac(msg, secret, timestamp).toString("hex") };
 }
 
 /** Format as a single header value: `t=<ts>,v1=<sig>` (Stripe convention). */
@@ -39,7 +58,7 @@ export function parseSignatureHeader(header: string): SignatureParts | null {
  * `toleranceSeconds` (replay protection).
  */
 export function verify(
-  body: string,
+  msg: SignedMessage,
   secret: string,
   header: string,
   toleranceSeconds = 300,
@@ -49,7 +68,7 @@ export function verify(
   if (!parsed) return false;
   if (Math.abs(now - parsed.timestamp) > toleranceSeconds) return false;
 
-  const expected = createHmac("sha256", secret).update(`${parsed.timestamp}.${body}`).digest();
+  const expected = mac(msg, secret, parsed.timestamp);
   const actual = Buffer.from(parsed.signature, "hex");
   if (expected.length !== actual.length) return false;
   return timingSafeEqual(expected, actual);

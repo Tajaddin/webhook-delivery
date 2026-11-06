@@ -8,7 +8,6 @@ function setup(transport: FakeTransport, policyOverrides = {}) {
   const queue = new DeliveryQueue();
   const clock = new VirtualClock(0);
   const worker = new DeliveryWorker(queue, transport, {
-    secret: "s",
     clock,
     rand: () => 0.5,
     policy: { baseMs: 100, maxMs: 1000, maxAttempts: 4, factor: 2, ...policyOverrides },
@@ -19,7 +18,7 @@ function setup(transport: FakeTransport, policyOverrides = {}) {
 describe("DeliveryWorker", () => {
   it("delivers on first try when the endpoint is healthy", async () => {
     const { queue, worker } = setup(new FakeTransport());
-    queue.enqueue({ url: "https://ok.com", payload: {} });
+    queue.enqueue({ endpointId: "ep", url: "https://ok.com", payload: {} });
     await worker.drain();
     expect(queue.stats().delivered).toBe(1);
   });
@@ -27,7 +26,7 @@ describe("DeliveryWorker", () => {
   it("retries transient failures then delivers", async () => {
     const transport = new FakeTransport({ failuresByUrl: { "https://flaky.com": 2 } });
     const { queue, worker } = setup(transport);
-    const d = queue.enqueue({ url: "https://flaky.com", payload: {} });
+    const d = queue.enqueue({ endpointId: "ep", url: "https://flaky.com", payload: {} });
     await worker.drain();
     expect(queue.get(d.id)!.status).toBe("delivered");
     expect(queue.get(d.id)!.attempts).toBe(3); // 2 failures + 1 success
@@ -36,7 +35,7 @@ describe("DeliveryWorker", () => {
   it("dead-letters after exhausting retries", async () => {
     const transport = new FakeTransport({ alwaysFail: new Set(["https://down.com"]) });
     const { queue, worker } = setup(transport);
-    const d = queue.enqueue({ url: "https://down.com", payload: {} });
+    const d = queue.enqueue({ endpointId: "ep", url: "https://down.com", payload: {} });
     await worker.drain();
     expect(queue.get(d.id)!.status).toBe("dead");
     expect(queue.get(d.id)!.attempts).toBe(4); // maxAttempts
@@ -46,7 +45,7 @@ describe("DeliveryWorker", () => {
   it("delivers 100% of deliverable messages under 50% transient failure", async () => {
     const transport = new FakeTransport({ randomFailureRate: 0.5, rand: () => seqRand() });
     const { queue, worker } = setup(transport, { maxAttempts: 20 });
-    for (let i = 0; i < 200; i++) queue.enqueue({ url: `https://h.com/${i}`, payload: { i } });
+    for (let i = 0; i < 200; i++) queue.enqueue({ endpointId: "ep", url: `https://h.com/${i}`, payload: { i } });
     await worker.drain();
     expect(queue.stats().delivered).toBe(200);
     expect(queue.stats().dead).toBe(0);
@@ -55,7 +54,7 @@ describe("DeliveryWorker", () => {
   it("eventually dead-letters a permanently down endpoint while delivering the rest", async () => {
     const transport = new FakeTransport({ alwaysFail: new Set(["https://h.com/1"]) });
     const { queue, worker } = setup(transport);
-    for (let i = 0; i < 5; i++) queue.enqueue({ url: `https://h.com/${i}`, payload: { i } });
+    for (let i = 0; i < 5; i++) queue.enqueue({ endpointId: "ep", url: `https://h.com/${i}`, payload: { i } });
     await worker.drain();
     expect(queue.stats().delivered).toBe(4);
     expect(queue.stats().dead).toBe(1);

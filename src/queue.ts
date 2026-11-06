@@ -8,17 +8,19 @@ export class DeliveryQueue {
   private byId = new Map<string, Delivery>();
   private byIdempotencyKey = new Map<string, string>();
 
-  /** Enqueue a delivery. Re-enqueuing the same idempotency key returns the
-   *  existing delivery instead of creating a duplicate. */
+  /** Enqueue a delivery. Re-enqueuing the same idempotency key for the same
+   *  endpoint returns the existing delivery instead of creating a duplicate. */
   enqueue(req: EnqueueRequest, now = Date.now()): Delivery {
     const key = req.idempotencyKey ?? randomUUID();
-    const existingId = this.byIdempotencyKey.get(key);
+    const scopedKey = JSON.stringify([req.endpointId, key]);
+    const existingId = this.byIdempotencyKey.get(scopedKey);
     if (existingId) {
       return this.byId.get(existingId)!;
     }
     const delivery: Delivery = {
       id: randomUUID(),
       idempotencyKey: key,
+      endpointId: req.endpointId,
       url: req.url,
       body: JSON.stringify(req.payload),
       status: "pending",
@@ -28,7 +30,7 @@ export class DeliveryQueue {
       nextAttemptAt: now,
     };
     this.byId.set(delivery.id, delivery);
-    this.byIdempotencyKey.set(key, delivery.id);
+    this.byIdempotencyKey.set(scopedKey, delivery.id);
     return delivery;
   }
 

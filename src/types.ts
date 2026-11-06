@@ -1,9 +1,11 @@
 export type DeliveryStatus = "pending" | "delivered" | "failed" | "dead";
 
 export interface Delivery {
+  /** Sent as `webhook-id` on every attempt, so receivers can drop retried duplicates. */
   id: string;
-  /** Idempotency key; duplicate enqueues with the same key are deduped. */
+  /** Idempotency key; duplicate enqueues with the same key for the same endpoint are deduped. */
   idempotencyKey: string;
+  endpointId: string;
   url: string;
   body: string;
   status: DeliveryStatus;
@@ -16,6 +18,7 @@ export interface Delivery {
 }
 
 export interface EnqueueRequest {
+  endpointId: string;
   url: string;
   payload: unknown;
   idempotencyKey?: string;
