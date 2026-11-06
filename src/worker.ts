@@ -10,7 +10,7 @@
 import { backoffDelayMs, DEFAULT_BACKOFF, isExhausted, type BackoffPolicy } from "./backoff.js";
 import { type Clock, SystemClock, VirtualClock } from "./clock.js";
 import type { DeliveryQueue } from "./queue.js";
-import type { Transport } from "./transport.js";
+import type { DeliveryResult, Transport } from "./transport.js";
 import type { Delivery } from "./types.js";
 
 export interface WorkerOptions {
@@ -23,6 +23,7 @@ export class DeliveryWorker {
   private readonly policy: BackoffPolicy;
   private readonly clock: Clock;
   private readonly rand: () => number;
+  private ticking = false;
 
   constructor(
     private readonly queue: DeliveryQueue,
@@ -34,11 +35,24 @@ export class DeliveryWorker {
     this.rand = opts.rand ?? Math.random;
   }
 
-  /** Attempt one delivery, advancing its state. Returns the new status. */
+  /**
+   * Attempt one claimed delivery, advancing its state and releasing the claim.
+   * Returns the new status. A delivered or dead delivery is never sent again,
+   * and a result that lands after another attempt made the delivery final
+   * does not overwrite it.
+   */
   async attempt(delivery: Delivery): Promise<Delivery["status"]> {
-    const result = await this.transport.send(delivery);
+    if (delivery.status !== "pending") return delivery.status;
+    let result: DeliveryResult;
+    try {
+      result = await this.transport.send(delivery);
+    } catch (err) {
+      result = { ok: false, status: 0, error: (err as Error).message };
+    }
+    delivery.inFlight = false;
     delivery.attempts += 1;
     delivery.updatedAt = this.clock.nowMs();
+    if (delivery.status !== "pending") return delivery.status;
 
     if (result.ok) {
       delivery.status = "delivered";
@@ -56,13 +70,23 @@ export class DeliveryWorker {
     return "pending";
   }
 
-  /** Process every ready delivery once. Returns how many were attempted. */
+  /**
+   * Process every ready delivery once. Returns how many were attempted. While
+   * a previous tick is still sending, a new one returns 0 immediately, so an
+   * interval timer cannot stack up overlapping ticks behind a slow receiver.
+   */
   async tick(): Promise<number> {
-    const ready = this.queue.claimReady(this.clock.nowMs());
-    for (const d of ready) {
-      await this.attempt(d);
+    if (this.ticking) return 0;
+    this.ticking = true;
+    try {
+      const ready = this.queue.claimReady(this.clock.nowMs());
+      for (const d of ready) {
+        await this.attempt(d);
+      }
+      return ready.length;
+    } finally {
+      this.ticking = false;
     }
-    return ready.length;
   }
 
   /**
@@ -82,7 +106,8 @@ export class DeliveryWorker {
         }
         continue;
       }
-      const pending = this.queue.pending();
+      // Deliveries another caller is sending are its to finish.
+      const pending = this.queue.pending().filter((d) => !d.inFlight);
       if (pending.length === 0) break;
       // Pending but not due: advance the virtual clock to the soonest.
       if (this.clock instanceof VirtualClock) {

@@ -15,6 +15,9 @@ export interface Delivery {
   updatedAt: number;
   /** Earliest time (epoch ms) the delivery is eligible to be attempted. */
   nextAttemptAt: number;
+  /** Set by claimReady while a worker attempts the delivery; nobody else can
+   *  claim it until that attempt is recorded. */
+  inFlight: boolean;
 }
 
 export interface EnqueueRequest {

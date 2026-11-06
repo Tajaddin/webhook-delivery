@@ -38,6 +38,13 @@ describe("DeliveryQueue", () => {
     expect(ready.map((d) => d.id)).toEqual([a.id]);
   });
 
+  it("claimReady hands a delivery to only one caller at a time", () => {
+    const q = new DeliveryQueue();
+    const a = q.enqueue({ endpointId: "ep", url: "https://a.com", payload: {} }, 1000);
+    expect(q.claimReady(2000).map((d) => d.id)).toEqual([a.id]);
+    expect(q.claimReady(2000)).toEqual([]);
+  });
+
   it("tracks stats and dead letters", () => {
     const q = new DeliveryQueue();
     const d = q.enqueue({ endpointId: "ep", url: "https://x.com", payload: {} });

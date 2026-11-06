@@ -92,6 +92,8 @@ Each request carries `webhook-id` (the delivery id, the same on every retry), `w
       │  now + backoff(attempt))
 ```
 
+`claimReady` marks every delivery it hands out as in flight, and nothing else can claim it until that attempt is recorded. A tick that starts while the previous one is still sending returns at once. A late result never overwrites `delivered` or `dead`. Delivery is still at-least-once: if a receiver handles a request but its response is lost, the retry arrives with the same `webhook-id`.
+
 ## Testing
 
 ```bash

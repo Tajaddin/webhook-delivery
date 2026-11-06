@@ -28,6 +28,7 @@ export class DeliveryQueue {
       createdAt: now,
       updatedAt: now,
       nextAttemptAt: now,
+      inFlight: false,
     };
     this.byId.set(delivery.id, delivery);
     this.byIdempotencyKey.set(scopedKey, delivery.id);
@@ -38,11 +39,14 @@ export class DeliveryQueue {
     return this.byId.get(id);
   }
 
-  /** Deliveries that are pending and due (nextAttemptAt <= now). */
+  /** Claim the deliveries that are pending, due (nextAttemptAt <= now) and
+   *  not already claimed. Each one is marked in flight, so a concurrent tick
+   *  or another worker cannot send it again until this attempt is recorded. */
   claimReady(now = Date.now()): Delivery[] {
     const ready: Delivery[] = [];
     for (const d of this.byId.values()) {
-      if (d.status === "pending" && d.nextAttemptAt <= now) {
+      if (d.status === "pending" && !d.inFlight && d.nextAttemptAt <= now) {
+        d.inFlight = true;
         ready.push(d);
       }
     }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { VirtualClock } from "../src/clock.js";
 import { DeliveryQueue } from "../src/queue.js";
-import { FakeTransport } from "../src/transport.js";
+import { FakeTransport, type DeliveryResult, type Transport } from "../src/transport.js";
 import { DeliveryWorker } from "../src/worker.js";
 
-function setup(transport: FakeTransport, policyOverrides = {}) {
+function setup(transport: Transport, policyOverrides = {}) {
   const queue = new DeliveryQueue();
   const clock = new VirtualClock(0);
   const worker = new DeliveryWorker(queue, transport, {
@@ -58,6 +58,77 @@ describe("DeliveryWorker", () => {
     await worker.drain();
     expect(queue.stats().delivered).toBe(4);
     expect(queue.stats().dead).toBe(1);
+  });
+});
+
+/**
+ * A slow receiver: every send stays in flight until release(). The first
+ * send succeeds; later ones get 409, like a receiver that rejects duplicates.
+ */
+class SlowReceiver implements Transport {
+  sends = 0;
+  private held: (() => void)[] = [];
+
+  async send(): Promise<DeliveryResult> {
+    const n = ++this.sends;
+    await new Promise<void>((resolve) => this.held.push(resolve));
+    return n === 1 ? { ok: true, status: 200 } : { ok: false, status: 409, error: "http 409" };
+  }
+
+  release(): void {
+    for (const resolve of this.held.splice(0)) resolve();
+  }
+}
+
+describe("DeliveryWorker under concurrency", () => {
+  it("does not start a tick while the previous one is still sending", async () => {
+    // server.ts fires tick() on an interval whether or not the last one finished.
+    const transport = new SlowReceiver();
+    const { queue, worker } = setup(transport);
+    const d = queue.enqueue({ endpointId: "ep", url: "https://slow.example/hook", payload: {} }, 0);
+    const ticks = [worker.tick(), worker.tick(), worker.tick()];
+    transport.release();
+    expect(await Promise.all(ticks)).toEqual([1, 0, 0]);
+    expect(transport.sends).toBe(1);
+    expect(d).toMatchObject({ status: "delivered", attempts: 1 });
+  });
+
+  it("lets only one of several workers sharing a queue claim a delivery", async () => {
+    const transport = new SlowReceiver();
+    const { queue, clock } = setup(transport);
+    const workers = [new DeliveryWorker(queue, transport, { clock }), new DeliveryWorker(queue, transport, { clock })];
+    const d = queue.enqueue({ endpointId: "ep", url: "https://slow.example/hook", payload: {} }, 0);
+    const ticks = workers.map((w) => w.tick());
+    transport.release();
+    expect(await Promise.all(ticks)).toEqual([1, 0]);
+    expect(transport.sends).toBe(1);
+    expect(d.status).toBe("delivered");
+  });
+
+  it("never lets a late failure overwrite a delivered status", async () => {
+    const transport = new SlowReceiver();
+    const { queue, worker } = setup(transport);
+    const d = queue.enqueue({ endpointId: "ep", url: "https://slow.example/hook", payload: {} }, 0);
+    const attempts = [worker.attempt(d), worker.attempt(d)];
+    transport.release();
+    await Promise.all(attempts);
+    expect(d.status).toBe("delivered");
+    expect(d.lastError).toBeUndefined();
+    expect(await worker.tick()).toBe(0);
+  });
+
+  it("records a transport that throws as a failed attempt and frees the delivery", async () => {
+    const throwing: Transport = {
+      send: async () => {
+        throw new Error("socket hang up");
+      },
+    };
+    const { queue, clock, worker } = setup(throwing);
+    const d = queue.enqueue({ endpointId: "ep", url: "https://x.example/hook", payload: {} }, 0);
+    await worker.tick();
+    expect(d).toMatchObject({ status: "pending", attempts: 1, lastError: "socket hang up" });
+    clock.advanceTo(d.nextAttemptAt);
+    expect(await worker.tick()).toBe(1);
   });
 });
 
