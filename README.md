@@ -54,19 +54,23 @@ Prerequisites: Node 20+.
 ```bash
 npm install
 npm test                  # 21 vitest cases
+export API_TOKEN=$(openssl rand -hex 32)   # required, no default
 npm run dev               # API on :8080, background worker draining every 200ms
 npm run bench             # fault-injection benchmark (99.92% eventual delivery hero)
 ```
 
 ```bash
+# every route except /healthz needs the bearer token
+AUTH="authorization: Bearer $API_TOKEN"
+
 # enqueue a delivery
-curl -s -XPOST localhost:8080/webhooks -H 'content-type: application/json' \
+curl -s -XPOST localhost:8080/webhooks -H "$AUTH" -H 'content-type: application/json' \
   -d '{"url":"https://httpbin.org/post","payload":{"event":"order.created"},"idempotencyKey":"order-42"}'
 # -> {"id":"...","status":"pending","idempotencyKey":"order-42"}
 
-curl -s localhost:8080/deliveries/<id>   # status, attempts, lastError
-curl -s localhost:8080/dlq               # dead-letter queue
-curl -s localhost:8080/stats             # {pending, delivered, failed, dead}
+curl -s -H "$AUTH" localhost:8080/deliveries/<id>   # status, attempts, lastError
+curl -s -H "$AUTH" localhost:8080/dlq               # dead-letter queue
+curl -s -H "$AUTH" localhost:8080/stats             # {pending, delivered, failed, dead}
 ```
 
 Receivers verify the `webhook-signature` header (`t=<unix>,v1=<hmac>`) with the shared secret using `verify()` from `src/signing.ts`.
@@ -105,7 +109,8 @@ src/
   ssrf.ts        # outbound address/port policy + guarded DNS lookup
   transport.ts   # HttpTransport (node:http, SSRF-guarded) + FakeTransport (programmable failures)
   worker.ts      # the at-least-once state machine
-  server.ts      # Hono API + background drain loop
+  app.ts         # Hono API (bearer-token auth)
+  server.ts      # entry point: env, wiring, background drain loop
 benchmarks/fault_injection.ts   # eventual-delivery + throughput hero
 ```
 

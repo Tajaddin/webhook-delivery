@@ -1,14 +1,11 @@
-// HTTP API for the webhook delivery service. Enqueue deliveries, inspect
-// status, and view the dead-letter queue. A background worker drains the queue
-// on a fixed interval using the system clock.
+// Entry point: wires the queue, worker and HTTP API together. A background
+// worker drains the queue on a fixed interval using the system clock.
 
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
+import { createApp } from "./app.js";
 import { SystemClock } from "./clock.js";
 import { DeliveryQueue } from "./queue.js";
-import { checkUrl } from "./ssrf.js";
 import { HttpTransport } from "./transport.js";
-import type { EnqueueRequest } from "./types.js";
 import { DeliveryWorker } from "./worker.js";
 
 const DEV_SECRET = "dev-secret-change-me";
@@ -25,6 +22,14 @@ if (process.env["NODE_ENV"] === "production" && secret === DEV_SECRET) {
   process.exit(1);
 }
 
+// No default: an open enqueue endpoint lets anyone send signed requests from
+// this service.
+const apiToken = process.env["API_TOKEN"];
+if (!apiToken) {
+  console.error("FATAL: API_TOKEN must be set. Every route except /healthz requires it as a bearer token.");
+  process.exit(1);
+}
+
 const queue = new DeliveryQueue();
 const worker = new DeliveryWorker(queue, new HttpTransport(), { secret, clock: new SystemClock() });
 
@@ -34,30 +39,7 @@ setInterval(() => {
   void worker.tick();
 }, intervalMs);
 
-const app = new Hono();
-
-app.get("/healthz", (c) => c.json({ status: "ok" }));
-
-app.post("/webhooks", async (c) => {
-  const body = await c.req.json<EnqueueRequest>().catch(() => null);
-  if (!body || typeof body.url !== "string") {
-    return c.json({ error: "url (http/https) and payload are required" }, 400);
-  }
-  const refused = checkUrl(body.url);
-  if (refused) return c.json({ error: refused }, 400);
-  const delivery = queue.enqueue(body);
-  return c.json({ id: delivery.id, status: delivery.status, idempotencyKey: delivery.idempotencyKey }, 202);
-});
-
-app.get("/deliveries/:id", (c) => {
-  const d = queue.get(c.req.param("id"));
-  if (!d) return c.json({ error: "not found" }, 404);
-  return c.json(d);
-});
-
-app.get("/dlq", (c) => c.json({ deadLetters: queue.deadLetters() }));
-
-app.get("/stats", (c) => c.json(queue.stats()));
+const app = createApp({ queue, apiToken });
 
 const port = Number(process.env["PORT"] ?? 8080);
 serve({ fetch: app.fetch, port }, (info) => {
