@@ -1,6 +1,6 @@
 # webhook-delivery
 
-> At-least-once webhook delivery with exponential backoff, dead-letter queue, HMAC signing, and idempotency. **99.92% eventual delivery under 30% transient-failure injection, 20,933 dispatches/sec** (deterministic, virtual clock, no network). TypeScript + Hono, 21 tests.
+> At-least-once webhook delivery with exponential backoff, dead-letter queue, per-endpoint HMAC signing, idempotency and an SSRF guard. **99.92% eventual delivery under 30% transient-failure injection** (deterministic simulation: virtual clock, fake transport, no network). TypeScript + Hono, 91 tests.
 
 [![ci](https://github.com/Tajaddin/webhook-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/webhook-delivery/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -20,10 +20,12 @@ npx tsx benchmarks/fault_injection.ts --count 20000 --failure-rate 0.3 --dead-fr
 | Transient failure injected | 30% per attempt |
 | Permanently-down endpoints | 434 (2%) |
 | **Eventual delivery rate (deliverable)** | **99.92%** |
-| **Dispatch throughput** | **20,933 /sec** |
+| Dispatch throughput (in-process, fake transport) | 35,759 /sec |
 | Attempts per delivery | 1.53 |
 | Dead-lettered | 449 (434 permanent + 15 exhausted) |
 | Stuck pending | 0 |
+
+Every row except throughput is deterministic and identical on every run. Throughput is wall-clock: the median of 5 consecutive runs (range 31,449 to 46,622 /sec) on an i5-13600KF with Node 24.14, and it moves with machine load. `benchmarks/results/fault_injection.json` holds the last run.
 
 At-least-once plus bounded retries delivers essentially everything whose endpoint is reachable, dead-letters the rest, and never leaves a delivery stuck. With the default 6-attempt policy, `0.3^6 ≈ 0.07%` of messages exhaust retries; raise `maxAttempts` and that goes to zero (the test suite proves 100% delivery at 50% failure with a 20-attempt policy).
 
@@ -53,7 +55,7 @@ Prerequisites: Node 20+.
 
 ```bash
 npm install
-npm test                  # 21 vitest cases
+npm test                  # 91 vitest cases
 export API_TOKEN=$(openssl rand -hex 32)   # required, no default
 npm run dev               # API on :8080, background worker draining every 200ms
 npm run bench             # fault-injection benchmark (99.92% eventual delivery hero)
@@ -97,13 +99,16 @@ Each request carries `webhook-id` (the delivery id, the same on every retry), `w
 ## Testing
 
 ```bash
-npm test     # 21 tests
+npm test     # 91 tests
 ```
 
-- **signing.test.ts** (7): sign/verify round trip, tamper/wrong-secret rejection, replay-window enforcement, header parse.
+- **signing.test.ts** (9): sign/verify round trip, tamper/wrong-secret rejection, a signature presented with another webhook id or endpoint id is rejected, replay-window enforcement, header parse.
 - **backoff.test.ts** (5): cap, full-jitter bounds, exhaustion threshold, attempt validation.
-- **queue.test.ts** (4): enqueue, idempotency dedup (original payload preserved), due-only `claimReady`, stats/DLQ.
-- **worker.test.ts** (5): first-try delivery, retry-then-succeed, dead-letter on exhaustion, 100% delivery under 50% transient failure with sufficient retries, mixed permanent-down + healthy.
+- **queue.test.ts** (6): enqueue, idempotency dedup (original payload preserved) scoped per endpoint, due-only `claimReady`, one claimer at a time, stats/DLQ.
+- **worker.test.ts** (9): first-try delivery, retry-then-succeed, dead-letter on exhaustion, 100% delivery under 50% transient failure with sufficient retries, mixed permanent-down + healthy; under concurrency against a slow receiver: overlapping ticks and two workers send once, a late failure never overwrites `delivered`, a throwing transport counts as a failed attempt.
+- **ssrf.test.ts** (49, mostly table cases): blocked and allowed IPv4/IPv6 addresses (private, loopback, link-local, metadata, ULA, IPv4-mapped, NAT64, 6to4), URL checks (scheme, port, IP-literal spellings), and the guarded lookup.
+- **transport.test.ts** (6): internal destinations and non-web ports refused before connecting, `localhost` refused via the resolved address, redirects not followed, headers and per-endpoint signature against a real local receiver, unknown endpoint not sent.
+- **app.test.ts** (7): bearer token required everywhere except `/healthz`, endpoint registration with distinct secrets, enqueue validation, secrets never exposed on reads, internal URLs refused.
 
 ## Project layout
 

@@ -8,6 +8,6 @@
   "dead": 449,
   "pending": 0,
   "eventual_delivery_rate_pct": 99.92,
-  "dispatch_throughput_per_sec": 20933,
-  "wall_ms": 1457.2
+  "dispatch_throughput_per_sec": 46622,
+  "wall_ms": 654.3
 }

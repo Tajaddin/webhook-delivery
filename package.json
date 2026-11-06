@@ -2,7 +2,7 @@
   "name": "webhook-delivery",
   "version": "0.1.0",
   "private": true,
-  "description": "At-least-once webhook delivery with exponential backoff, dead-letter queue, HMAC signing, and idempotency. Hero: 100% eventual delivery under 30% transient-failure injection.",
+  "description": "At-least-once webhook delivery with exponential backoff, dead-letter queue, per-endpoint HMAC signing, idempotency and an SSRF guard. 99.92% eventual delivery under 30% transient-failure injection (deterministic simulation).",
   "license": "MIT",
   "author": "Tajaddin Gafarov <gafarovtajaddin@gmail.com>",
   "type": "module",
