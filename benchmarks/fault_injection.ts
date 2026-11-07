@@ -2,9 +2,11 @@
 // transiently at a configurable rate, then drain with retries and report the
 // eventual delivery rate plus dispatch throughput.
 //
-// The hero claim: at-least-once + bounded retries delivers 100% of messages
-// whose endpoints are not permanently down, even at a high transient-failure
-// rate. Deterministic (seeded RNG, virtual clock), no network, no waiting.
+// At-least-once + bounded retries delivers every message whose endpoint is not
+// permanently down except the ~failureRate^maxAttempts that exhaust their
+// retries (99.92% at 30% with the default 6 attempts). Deterministic (seeded
+// RNG, virtual clock), no network, no waiting; only the throughput figure
+// varies between runs.
 //
 //   npx tsx benchmarks/fault_injection.ts --count 20000 --failure-rate 0.3
 
@@ -49,7 +51,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < args.count; i++) {
     const url = `https://hooks.example.com/e/${i}`;
     if (rand() < args.deadFraction) deadUrls.add(url);
-    queue.enqueue({ url, payload: { i }, idempotencyKey: `k-${i}` }, clock.nowMs());
+    queue.enqueue({ endpointId: `e-${i}`, url, payload: { i }, idempotencyKey: `k-${i}` }, clock.nowMs());
   }
 
   const transport = new FakeTransport({
@@ -58,7 +60,6 @@ async function main(): Promise<void> {
     rand: mulberry32(99),
   });
   const worker = new DeliveryWorker(queue, transport, {
-    secret: "bench",
     policy: DEFAULT_BACKOFF,
     clock,
     rand,

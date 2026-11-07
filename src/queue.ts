@@ -8,17 +8,19 @@ export class DeliveryQueue {
   private byId = new Map<string, Delivery>();
   private byIdempotencyKey = new Map<string, string>();
 
-  /** Enqueue a delivery. Re-enqueuing the same idempotency key returns the
-   *  existing delivery instead of creating a duplicate. */
+  /** Enqueue a delivery. Re-enqueuing the same idempotency key for the same
+   *  endpoint returns the existing delivery instead of creating a duplicate. */
   enqueue(req: EnqueueRequest, now = Date.now()): Delivery {
     const key = req.idempotencyKey ?? randomUUID();
-    const existingId = this.byIdempotencyKey.get(key);
+    const scopedKey = JSON.stringify([req.endpointId, key]);
+    const existingId = this.byIdempotencyKey.get(scopedKey);
     if (existingId) {
       return this.byId.get(existingId)!;
     }
     const delivery: Delivery = {
       id: randomUUID(),
       idempotencyKey: key,
+      endpointId: req.endpointId,
       url: req.url,
       body: JSON.stringify(req.payload),
       status: "pending",
@@ -26,9 +28,10 @@ export class DeliveryQueue {
       createdAt: now,
       updatedAt: now,
       nextAttemptAt: now,
+      inFlight: false,
     };
     this.byId.set(delivery.id, delivery);
-    this.byIdempotencyKey.set(key, delivery.id);
+    this.byIdempotencyKey.set(scopedKey, delivery.id);
     return delivery;
   }
 
@@ -36,11 +39,14 @@ export class DeliveryQueue {
     return this.byId.get(id);
   }
 
-  /** Deliveries that are pending and due (nextAttemptAt <= now). */
+  /** Claim the deliveries that are pending, due (nextAttemptAt <= now) and
+   *  not already claimed. Each one is marked in flight, so a concurrent tick
+   *  or another worker cannot send it again until this attempt is recorded. */
   claimReady(now = Date.now()): Delivery[] {
     const ready: Delivery[] = [];
     for (const d of this.byId.values()) {
-      if (d.status === "pending" && d.nextAttemptAt <= now) {
+      if (d.status === "pending" && !d.inFlight && d.nextAttemptAt <= now) {
+        d.inFlight = true;
         ready.push(d);
       }
     }
